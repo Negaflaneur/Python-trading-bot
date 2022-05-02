@@ -1,5 +1,4 @@
 from cProfile import label
-from email import header
 from lib2to3.pgen2.token import PERCENT
 from turtle import update
 from binance.client import Client
@@ -7,7 +6,7 @@ from binance import ThreadedWebsocketManager
 import time
 from datetime import datetime
 import os
-from numpy import sign
+from numpy import histogram, sign
 import pandas as pd
 from binance.enums import *
 import btalib
@@ -33,9 +32,10 @@ def create_order_book():
     trades = list(trades)
     print("YOur orders are ...", trades)
     orders_book = pd.DataFrame(trades)
-    orders_book['time'] = pd.to_datetime(orders_book['time'], unit='ms')
-    orders_book.set_index('time', inplace=True)
-    orders_book = orders_book.drop(columns=['orderListId', 'clientOrderId', 'price', 'status', 'timeInForce', 'type', 'stopPrice', 'icebergQty', 'updateTime', 'isWorking', 'origQuoteOrderQty'])
+    if len(trades) > 0:
+        orders_book['time'] = pd.to_datetime(orders_book['time'], unit='ms')
+        orders_book.set_index('time', inplace=True)
+        orders_book = orders_book.drop(columns=['orderListId', 'clientOrderId', 'price', 'status', 'timeInForce', 'type', 'stopPrice', 'icebergQty', 'updateTime', 'isWorking', 'origQuoteOrderQty'])
     orders_book.to_csv('orderbook.csv')
     return orders_book
 
@@ -157,7 +157,7 @@ class Trading_Strategy:
         return order_df
 
 def Combine_all_strategies():
-    btc_price_frame = get_historical_price('BTCUSDT', '1m', '1 hours GMT')
+    btc_price_frame = get_historical_price('BTCUSDT', '5m', '4 hours ago GMT')
 
     #reading the price file we have created and setting the index to represent dates
     indicator_frame = pd.read_csv('historical_price.csv', index_col=0)
@@ -171,12 +171,23 @@ def Combine_all_strategies():
     
     return signals_inst
 
+def close_handling(df, position_status_buy, position_status_sell):
+    close_position = False
+    for i in range(len(df)):
+        if ((df['histogram'][i] < 0 ) or (df['histogram'][i] < df['histogram'][i -1])) and (position_status_buy == True) and (position_status_sell== False):
+            close_position = True
+        elif ((df['histogram'][i] > 0 ) or (df['histogram'][i] > df['histogram'][i -1])) and (position_status_sell == True) and (position_status_buy == False):
+            close_position = True
+        else:
+            close_position = False
+    return close_position
+    
 def create_price_log(df):
     entry_prices = df
     entry_prices.to_csv('lastprice.csv')
-    entry_prices = pd.read_csv('lastprice.csv')
-    entry_prices.reset_index(drop=True, inplace=True)
-    return entry_prices
+    entry_prices_read = pd.read_csv('lastprice.csv', index_col=0)
+    entry_prices_read.reset_index(drop=True, inplace=True)
+    return entry_prices_read
 
 def Place_Order(df, pair, btc_balance, usdt_balance, open_postion_buy=False, open_position_sell=False):
 
@@ -198,7 +209,7 @@ def Place_Order(df, pair, btc_balance, usdt_balance, open_postion_buy=False, ope
         print(f'The current close price is ' + str(df['close'].iloc[-1]))
         print(df.tail())
         #if we have a buy signal and our balance does not equal 0, we open a buy trade
-    if (df['buy'].iloc[-1] == df['close'].iloc[-1]) and (open_position_sell == False) and (open_postion_buy == False) and (usdt_balance != 0):
+    if (df['buy'].iloc[-1] == df['close'].iloc[-1]) and (open_position_sell == False) and (open_postion_buy == False) and (usdt_balance > 0):
         order = client.create_order(symbol=pair, side='BUY', type='MARKET', quantity=btc_usdt_postion_size)
         open_postion_buy = True
         open_position_sell = False
@@ -214,7 +225,7 @@ def Place_Order(df, pair, btc_balance, usdt_balance, open_postion_buy=False, ope
         print("Position size is ", buy_pos_quantity)
         # setting a stop loss
         stop_loss_price = buy_price - 100.0
-        take_profit_price = buy_price + 40.0
+        take_profit_price = buy_price + 200.0
     while (open_postion_buy) and (open_position_sell != True):
         #while we have a buy trade open, we update the price
         time.sleep(3)
@@ -223,14 +234,14 @@ def Place_Order(df, pair, btc_balance, usdt_balance, open_postion_buy=False, ope
         print('The stop price is ', stop_loss_price)
         print('The take profit price is ', take_profit_price)
         print('The buy price is ', str(order['fills'][0]['price'] ))
+        close_status = close_handling(df, open_postion_buy, open_position_sell)
             
         print(f'Buy trade open')
         print(df.tail())
         # if we have a signal for selling, we close the buy order
-        if (float(df['histogram'].iloc[-1]) < -2.0) or (float(df['close'].iloc[-1]) > take_profit_price) or (float(df['close'].iloc[-1]) <stop_loss_price) and(open_postion_buy):
+        if close_status or (float(df['close'].iloc[-1]) > take_profit_price) or (float(df['close'].iloc[-1]) <stop_loss_price) and(open_postion_buy):
             order = client.create_order(symbol = pair, side='SELL', type='MARKET', quantity=buy_pos_quantity)
             read_order_book()
-
             prices_df['buy_close_price'] = order['fills'][0]['price']
             create_price_log(prices_df)
 
@@ -241,7 +252,7 @@ def Place_Order(df, pair, btc_balance, usdt_balance, open_postion_buy=False, ope
             print(df.tail())
             break
     #otherwise, if we get a sell signal, we place a sell order at a market price
-    if (df['sell'].iloc[-1] == df['close'].iloc[-1]) and (open_position_sell == False) and (open_postion_buy == False) and (btc_balance != 0):
+    if (df['sell'].iloc[-1] == df['close'].iloc[-1]) and (open_position_sell == False) and (open_postion_buy == False) and (btc_balance > 0):
         order = client.create_order(symbol=pair, side='SELL', type='MARKET', quantity=btc_trade_quantity)
         read_order_book()
 
@@ -256,7 +267,7 @@ def Place_Order(df, pair, btc_balance, usdt_balance, open_postion_buy=False, ope
         print(buy_price)
         #setting the stop loss 
         stop_loss_price = buy_price + 100.0
-        take_profit_price = buy_price - 40.0
+        take_profit_price = buy_price - 200.0
     while (open_position_sell) and (open_postion_buy != True):
         time.sleep(5)
         df = Combine_all_strategies()
@@ -264,17 +275,17 @@ def Place_Order(df, pair, btc_balance, usdt_balance, open_postion_buy=False, ope
         print("The sell stop loss is ", stop_loss_price)
         print('The take profit price is ', take_profit_price)
         print('The order price is ', str(order['fills'][0]['price']))
+
+        close_status = close_handling(df, open_postion_buy, open_position_sell)
             
         print(f'You have entered a sell order, ,the current close price is  ' + str(df['close'].iloc[-1]))
         print(df.tail())
         #if we get a signal to close the sell order or if the price hits the stop loss, we close it
-        if (float(df['histogram'].iloc[-1]) > 2.0) or (float(df['close'].iloc[-1]) < take_profit_price) or  (float(df['close'].iloc[-1]) > stop_loss_price) and(open_position_sell):
+        if (close_status) or (float(df['close'].iloc[-1]) < take_profit_price) or  (float(df['close'].iloc[-1]) > stop_loss_price) and(open_position_sell):
             order = client.create_order(symbol = pair, side='BUY', type='MARKET', quantity=btc_trade_quantity)
             read_order_book()
-
             prices_df['sell_close_price'] = order['fills'][0]['price']
             create_price_log(prices_df)
-
 
             print('You have closed the order', order)
             open_position_sell = False
