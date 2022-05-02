@@ -1,13 +1,13 @@
 # Binance spot trading bot
 
-A binance trading bot for spot trading using Binance API that uses MACD and PSAR technical indicators to analyse the market.
+A binance trading bot for spot and futures trading using Binance API that uses MACD and PSAR technical indicators to analyse the market.
 
 ## Description
 
 The project is a cryptocurrency trading bot written in Python, intended to require minimal user intervention.
 It is observed that the market price can be analysed using several technical indicators to enter and close the trades at the maximum profit
 
-It operates on the spot market by listening to the price data stream and identifying trade opportunites based on the market trend and recent behaviour.
+It operates on the spot and futures markets by listening to the price data stream and identifying trade opportunites based on the market trend and recent behaviour.
 
 Moving Average Convergence Divergence(MACD) is a technical indicator that measures the relationship between 12 and 26 period moving averages to generate trade signals.
 MACD is used as a crossover indicator and oscillator indicator.
